@@ -6,6 +6,12 @@
 
 set -e
 
+KERNELRELEASE="${KERNELRELEASE:=$(cat include/config/kernel.release)}"
+KDEB_SOURCENAME="${KDEB_SOURCENAME:="linux-$KERNELRELEASE"}"
+MAINTAINER="jcai <jcai@hz_dev.cn>"
+MAKE="${MAKE:="/usr/bin/make"}"
+ARCH="${ARCH:="arm64"}"
+
 is_enabled() {
 	grep -q "^$1=y" include/config/auto.conf
 }
@@ -86,11 +92,22 @@ set_debarch() {
 
 # Some variables and settings used throughout the script
 version=$KERNELRELEASE
+
+exversion=""
+echo "XXX: Kernel_release: ${version}"
+if echo "$version" | grep -q "debug"; then
+	exversion="debug"
+elif echo "$version" | grep -q "production"; then
+	exversion="production"
+fi
+echo "XXX: Extra version: ${exversion}"
+
 if [ -n "$KDEB_PKGVERSION" ]; then
 	packageversion=$KDEB_PKGVERSION
 	revision=${packageversion##*-}
 else
-	revision=$(cat .version 2>/dev/null||echo 1)
+	srctree=.
+	revision=$($srctree/init/build-version)
 	packageversion=$version-$revision
 fi
 sourcename=$KDEB_SOURCENAME
@@ -172,21 +189,25 @@ EOF
 cat <<EOF > debian/control
 Source: $sourcename
 Section: kernel
+Architecture: $debarch
 Priority: optional
 Maintainer: $maintainer
 Rules-Requires-Root: no
-Build-Depends: bc, rsync, kmod, cpio, bison, flex | flex:native $extra_build_depends
+Build-Depends: bc, dwarves, rsync, kmod, cpio, bison, flex | flex:native $extra_build_depends
 Homepage: https://www.kernel.org/
 
-Package: $packagename-$version
+Package: $packagename-truenas-$exversion-$debarch
 Architecture: $debarch
+Provides: $packagename-$debarch, linux-image-generic
+Depends: kmod, linux-base (>= 4.3~), initramfs-tools (>= 0.120+deb8u2) | linux-initramfs-tools
 Description: Linux kernel, version $version
  This package contains the Linux kernel, modules and corresponding other
  files, version: $version.
 
-Package: linux-libc-dev
+Package: linux-truenas-$exversion-libc-dev
 Section: devel
-Provides: linux-kernel-headers
+Provides: linux-kernel-headers, linux-libc-dev
+Conflicts: linux-libc-dev
 Architecture: $debarch
 Description: Linux support headers for userspace development
  This package provides userspaces headers from the Linux kernel.  These headers
@@ -197,8 +218,9 @@ EOF
 if is_enabled CONFIG_MODULES; then
 cat <<EOF >> debian/control
 
-Package: linux-headers-$version
+Package: linux-headers-truenas-$exversion-$debarch
 Architecture: $debarch
+Provides: linux-headers-$debarch
 Description: Linux kernel headers for $version on $debarch
  This package provides kernel header files for $version on $debarch
  .
@@ -209,12 +231,26 @@ fi
 if is_enabled CONFIG_DEBUG_INFO; then
 cat <<EOF >> debian/control
 
-Package: linux-image-$version-dbg
+Package: linux-image-truenas-$exversion-$debarch-dbg
+Provides: linux-image-$debarch-dbg
 Section: debug
 Architecture: $debarch
 Description: Linux kernel debugging symbols for $version
  This package will come in handy if you need to debug the kernel. It provides
  all the necessary debug symbols for the kernel and its modules.
+EOF
+fi
+
+if is_enabled CONFIG_PERF_EVENTS; then
+cat <<EOF >> debian/control
+
+Package: linux-perf-truenas
+Architecture: any
+Replaces: linux-base, linux-tools-common, linux-perf
+Depends: \${shlibs:Depends}
+Description: Performance analysis tools for Linux $version
+ This package contains the 'perf' performance analysis tools for Linux
+ kernel version $version .
 EOF
 fi
 
@@ -236,11 +272,20 @@ binary-arch: build-arch
 	KBUILD_BUILD_VERSION=${revision} -f \$(srctree)/Makefile intdeb-pkg
 
 clean:
-	rm -rf debian/*tmp debian/files
+	rm -rf debian/files debian/linux-*
 	\$(MAKE) clean
 
 binary: binary-arch
 EOF
+
+if [ ! -f debian/changelog ]; then
+	dch --no-conf -b --package $sourcename --newversion $version-1 --distribution sid --urgency low --changelog scripts/package/truenas/changelog --controlmaint Build TrueNAS kernel
+fi
+
 chmod +x debian/rules
+mkdir -p debian/certs
+cp scripts/package/truenas/debian-uefi-certs.pem debian/certs
+cp scripts/package/truenas/changelog debian/changelog
+cp scripts/package/truenas/copyright debian/copyright
 
 exit 0
