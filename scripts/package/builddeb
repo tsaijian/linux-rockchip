@@ -119,7 +119,7 @@ echo "XXX: Extra version: ${exversion}"
 tmpdir=debian/linux-image
 dbg_dir=debian/linux-image-dbg
 tools_dir=debian/linux-perf
-packagename=linux-image-truenas-$exversion-amd64
+packagename=linux-image-truenas-$exversion-arm64
 dbg_packagename=$packagename-dbg
 tools_packagename=linux-perf-truenas
 
